@@ -9,32 +9,6 @@ import cv2
 from zlib import compress, decompress
 
 
-def server(data_source, host="172.25.25.26", port=8888):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind((host, port))
-    s.listen()
-    server_should_terminate = False
-    while not server_should_terminate:
-        conn, addr = s.accept()
-        with conn:
-            print(f"Connected by {addr}")
-            while True:
-                try:
-                    data = conn.recv(1024)
-                    if data == b"terminate":
-                        server_should_terminate = True
-                        break
-                    conn.sendall(bytes(f"X: {data_source.servo_value[0]}, Y: {data_source.servo_value[1]}, Z: 0.0, W: 0.0,", "utf-8"))
-                    # print(f"request: {data}")
-                except ConnectionAbortedError:
-                    print("Client disconnected")
-                    s.listen()
-                    break
-                except ConnectionResetError:
-                    s.listen()
-                    break
-
-
 class CameraServer:
     def __init__(self, fps=30, width=400, height=400, host="172.25.25.25", data_port=8000, status_port=8080):
         self.buffer = []
@@ -75,6 +49,7 @@ class CameraServer:
         elif self.server_type == "UDP":
             self.data_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.data_server.bind((self.host, self.data_port))
+            self.address = None
             self.data_socket = None
         # measurement
         self.data_socket_bytes_flux = 0
@@ -84,9 +59,9 @@ class CameraServer:
 
     def init_camera(self):
         if sys.platform == 'linux':
-            self.camera = cv2.VideoCapture(0, cv2.CAP_V4L2)  # direct show  CAP_DSHOW
+            self.camera = cv2.VideoCapture(0, cv2.CAP_V4L2)
         else:
-            self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # direct show  CAP_DSHOW
+            self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         if self.camera.isOpened():
             print("Camera is Online.")
         else:
@@ -118,9 +93,9 @@ class CameraServer:
 
     def test_camera(self):
         if sys.platform == 'linux':
-            self.camera = cv2.VideoCapture(0, cv2.CAP_V4L2)  # direct show  CAP_DSHOW
+            self.camera = cv2.VideoCapture(0, cv2.CAP_V4L2)
         else:
-            self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # direct show  CAP_DSHOW
+            self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         if self.camera.isOpened():
             print("Camera Test Pass")
             self.camera.release()
@@ -280,7 +255,6 @@ class CameraServer:
                         data_to_send = self.slice_data_udp(self.buffer.pop(0), 4096*10)
                         for pack in data_to_send:
                             self.data_socket.sendto(pack, self.address)
-                        # self.data_socket.sendto(b'done')
                         # print("send one frame.")
                         # self.server_ready = True
                     else:
@@ -406,7 +380,7 @@ class CameraServer:
             preview = True
             while preview:
                 if self.buffer and self.camera:
-                    cv2.imshow('Camera0', cv2.imdecode(np.frombuffer(self.unzip_frame(self.buffer[-1]), dtype=np.uint8), -1))
+                    cv2.imshow('C0', cv2.imdecode(np.frombuffer(self.unzip_frame(self.buffer[-1]), dtype=np.uint8), -1))
                     time.sleep(1/self.fps)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     print("Camera stopped by keyboard control.")
@@ -461,23 +435,10 @@ class CameraServer:
         self.server_ready = True
         while not self.server_should_close:
             time.sleep(1)
-
-
-class Server:
-    def __init__(self, host, port):
-        self.host = host
-        self.port = port
-        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server.bind((self.host, self.port))
-        self.server.listen()
-        self.socket = None
+        self.reset(trigger="server_should_close")
 
 
 if __name__ == "__main__":
     camera_server = CameraServer()
     camera_server()
     ...
-
-
-
-

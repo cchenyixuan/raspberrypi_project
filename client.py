@@ -62,7 +62,7 @@ class Client:
             except ConnectionResetError:
                 print("Status-sender offline: Server connection reset")
                 break
-            time.sleep(1.0)
+            time.sleep(60)
 
     def receive_status(self):
         # mark server as ready when receive "ServerReady"
@@ -80,7 +80,7 @@ class Client:
             except ConnectionResetError:
                 print("Status-receiver offline: Server connection reset")
                 break
-            time.sleep(1.0)
+            time.sleep(0.1)
 
     def receive_data(self):
         # receive video from server
@@ -93,13 +93,13 @@ class Client:
                     data = self.data_socket.recv(1024)
                 elif self.server_type == "UDP":
                     data, server = self.data_socket.recvfrom(4096*10)
-                    print(len(data), data[-10:], server)
+                    # print(len(data), data[-10:], server)
                 # if data is received
                 if data[-4:-2] == data[-2:]:
                     # one frame is received
                     self.tmp.append(data)
                     self.buffer.append(b''.join([pack[:-6] for pack in self.tmp if pack[-6:-4] == data[-6:-4]]))
-                    print("received one frame by <receive data>", len(self.buffer))
+                    # print("received one frame by <receive data>", len(self.buffer))
                     self.tmp = []
                     # self.status_setter((self.server_ready, True))
                 else:
@@ -115,6 +115,9 @@ class Client:
                 print("Data-receiver timeout! ")
                 self.tmp = []
                 # self.status_setter((self.server_ready, True))
+            except OSError:
+                print("Data-receiver offline: Server connection reset")
+                break
 
     def render_stream(self):
         # check if stream comes in
@@ -134,7 +137,6 @@ class Client:
         correct = 0
         total = 0
         while True:
-
             # discard older data
             if len(self.buffer) >= 60:
                 self.buffer = self.buffer[-60:]
@@ -152,14 +154,17 @@ class Client:
                 # frame will not be updated
                 pass
             cv2.imshow('Camera0', cv2.imdecode(np.frombuffer(frame_buffer, dtype=np.uint8), 1))
+            if total % 600 == 0 and total != 0:
+                print(f"Accuracy: {correct / total}, correct: {correct}, total: {total}")
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 print("Camera stopped by keyboard control.")
                 # if self.status_socket:
                 #     self.status_socket.close()
                 # if self.data_socket:
                 #     self.data_socket.close()
-                print("Accuracy: ", correct/total)
+                print(f"Accuracy: {correct / total}, correct: {correct}, total: {total}")
                 break
+            time.sleep(0.01)
         self.stop()
 
     def stop(self):
