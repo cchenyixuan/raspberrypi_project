@@ -34,8 +34,10 @@ def server(data_source, host="172.25.25.26", port=8888):
 
 
 class CameraServer:
-    def __init__(self, fps=30, width=1080, height=720, host="172.25.25.25", data_port=8000, status_port=8080):
+    def __init__(self, fps=30, width=400, height=400, host="172.25.25.25", data_port=8000, status_port=8080):
         self.buffer = []
+
+        self.server_type = "UDP"
 
         self.client_ready = False  # client is ready to receive data(client-tmp-buffer is empty)
         self.server_ready = False  # buffer is not empty
@@ -63,10 +65,15 @@ class CameraServer:
         self.status_server.listen()
         self.status_socket = None
         # data server
-        self.data_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.data_server.bind((self.host, self.data_port))
-        self.data_server.listen()
-        self.data_socket = None
+        if self.server_type == "TCP":
+            self.data_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.data_server.bind((self.host, self.data_port))
+            self.data_server.listen()
+            self.data_socket = None
+        elif self.server_type == "UDP":
+            self.data_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.data_server.bind((self.host, self.data_port))
+            self.data_socket = None
         # measurement
         self.data_socket_bytes_flux = 0
         self.status_socket_bytes_flux = 0
@@ -186,46 +193,111 @@ class CameraServer:
         :return: None
         """
         while not self.server_should_close:
-            self.data_socket, addr = self.data_server.accept()
-            # following codes will not be run until a client connects this server
-            print(f"Data server connected by {addr}")
-            send_data = threading.Thread(target=self.send_data)
-            send_data.daemon = True
-            send_data.start()
-            # data service is opened
-            self.server_status[1] = True
-            while self.data_socket:
-                # data-socket is alive, do nothing
-                time.sleep(1)
-            # data service is closed
-            self.server_status[1] = False
+            if self.server_type == "TCP":
+                self.data_socket, addr = self.data_server.accept()
+                # following codes will not be run until a client connects this server
+                print(f"Data server connected by {addr}")
+                send_data = threading.Thread(target=self.send_data)
+                send_data.daemon = True
+                send_data.start()
+                # data service is opened
+                self.server_status[1] = True
+                while self.data_socket:
+                    # data-socket is alive, do nothing
+                    time.sleep(1)
+                # data service is closed
+                self.server_status[1] = False
+            elif self.server_type == "UDP":
+                message, self.address = self.data_server.recvfrom(1024)
+                print("Message <establish_data_connection>: ", message, self.address)
+                self.data_socket = self.data_server
+                send_data = threading.Thread(target=self.send_data)
+                send_data.daemon = True
+                send_data.start()
+                # data service is opened
+                self.server_status[1] = True
+                while self.data_socket:
+                    # data-socket is alive, do nothing
+                    time.sleep(1)
+                # data service is closed
+                self.server_status[1] = False
+                self.data_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self.data_server.bind((self.host, self.data_port))
+                self.data_socket = None
 
     def send_data(self):
-        while self.data_socket:
-            try:
-                if self.buffer:
-                    # print(len(self.buffer), len(self.buffer[0]))
-                    self.data_socket_bytes_flux += len(self.buffer[0])
-                    self.data_socket.sendall(self.buffer.pop(0))
-                    self.data_socket.sendall(b'done')
-                    # print("send one frame.")
-                    # self.server_ready = True
-                else:
-                    pass
-            except ConnectionAbortedError:
-                print("Client data connection lost")
-                print("Stop sending data")
-                self.data_socket = None
-                break
-            except ConnectionResetError:
-                print("Client data connection lost")
-                print("Stop sending data")
-                self.data_socket = None
-                break
-            except BrokenPipeError:
-                self.data_socket = None
-                break
-            time.sleep(0.01)
+        if self.server_type == "TCP":
+            while self.data_socket:
+                try:
+                    if self.buffer:
+                        # print(len(self.buffer), len(self.buffer[0]))
+                        self.data_socket_bytes_flux += len(self.buffer[0])
+                        self.data_socket.sendall(self.buffer.pop(0))
+                        self.data_socket.sendall(b'done')
+                        # print("send one frame.")
+                        # self.server_ready = True
+                    else:
+                        pass
+                except ConnectionAbortedError:
+                    print("Client data connection lost")
+                    print("Stop sending data")
+                    self.data_socket = None
+                    break
+                except ConnectionResetError:
+                    print("Client data connection lost")
+                    print("Stop sending data")
+                    self.data_socket = None
+                    break
+                except BrokenPipeError:
+                    self.data_socket = None
+                    break
+                time.sleep(0.01)
+        elif self.server_type == "UDP":
+            while self.data_socket:
+                try:
+                    if self.buffer:
+                        # print(len(self.buffer), len(self.buffer[0]))
+                        self.data_socket_bytes_flux += len(self.buffer[0])
+                        data_to_send = self.slice_data_udp(self.buffer.pop(0), 4096*10)
+                        for pack in data_to_send:
+                            self.data_socket.sendto(pack, self.address)
+                        # self.data_socket.sendto(b'done')
+                        print("send one frame.")
+                        # self.server_ready = True
+                    else:
+                        pass
+                except ConnectionAbortedError:
+                    print("Client data connection lost")
+                    print("Stop sending data")
+                    self.data_socket = None
+                    break
+                except ConnectionResetError:
+                    print("Client data connection lost")
+                    print("Stop sending data")
+                    self.data_socket = None
+                    break
+                except BrokenPipeError:
+                    self.data_socket = None
+                    break
+                time.sleep(0.01)
+
+    @staticmethod
+    def slice_data_udp(data, pack_size=4096):
+        """
+        divide data to packs
+        :param data: bytes
+        :param pack_size: slice-size
+        :return: packs sliced
+        """
+        packs = []
+        salt = np.random.randint(10, 99)
+        while data:
+            packs.append(data[:pack_size-6]+bytes(f'{salt}'+f'{len(packs)}'.zfill(4), encoding='utf-8'))
+            data = data[pack_size-6:]
+
+        for step in range(len(packs)):
+            packs[step] = packs[step][:-4]+bytes(f'{len(packs)-1}'.zfill(2), encoding='utf-8')+packs[step][-2:]
+        return packs
 
     @staticmethod
     def zip_frame(buffer):
@@ -277,6 +349,7 @@ class CameraServer:
         # connection is closed, close camera
         if self.camera:
             self.close_camera()
+            self.data_socket = None
 
     def capture(self):
         ret, frame = self.camera.read()

@@ -10,6 +10,7 @@ import zlib
 
 class Client:
     def __init__(self, host="172.25.25.25", data_port=8000, status_port=8080):
+        self.server_type = "UDP"
         # host and port config
         self.host = host
         self.data_port = data_port
@@ -19,8 +20,12 @@ class Client:
         self.status_socket.connect((self.host, self.status_port))
         time.sleep(1)
         # data pipe line
-        self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.data_socket.connect((self.host, self.data_port))
+        if self.server_type == "TCP":
+            self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.data_socket.connect((self.host, self.data_port))
+        elif self.server_type == "UDP":
+            self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.data_socket.sendto(b'Hello Server', (host, data_port))
 
         # server client status
         self.server_ready = False
@@ -83,12 +88,16 @@ class Client:
             try:
                 # receive data from data socket
                 # self.data_socket.settimeout(1)
-                data = self.data_socket.recv(1024)
+                if self.server_type == "TCP":
+                    data = self.data_socket.recv(1024)
+                elif self.server_type == "UDP":
+                    data, server = self.data_socket.recvfrom(4096*10)
+                    print(len(data), data[-10:], server)
                 # if data is received
-                if data[-4:] == b"done":
+                if data[-4:-2] == data[-2:]:
                     # one frame is received
-                    self.tmp.append(data[:-4])
-                    self.buffer.append(b''.join(self.tmp))
+                    self.tmp.append(data)
+                    self.buffer.append(b''.join([pack[:-6] for pack in self.tmp if pack[-6:-4] == data[-6:-4]]))
                     print("received one frame by <receive data>", len(self.buffer))
                     self.tmp = []
                     # self.status_setter((self.server_ready, True))
@@ -121,6 +130,8 @@ class Client:
             else:
                 time.sleep(0.01)
         # endless render
+        correct = 0
+        total = 0
         while True:
 
             # discard older data
@@ -131,8 +142,11 @@ class Client:
                 frame = self.buffer.pop(0)
                 try:
                     frame_buffer = self.unzip_frame(frame)
+                    correct += 1
+                    total += 1
                 except:  # zlib.error: Error -3 while decompressing data: incorrect header check
                     print("Incomplete frame_buffer! Data has been discarded!")
+                    total += 1
             else:
                 # frame will not be updated
                 pass
@@ -143,6 +157,7 @@ class Client:
                 #     self.status_socket.close()
                 # if self.data_socket:
                 #     self.data_socket.close()
+                print("Accuracy: ", correct/total)
                 break
         self.stop()
 
