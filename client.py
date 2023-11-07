@@ -9,7 +9,7 @@ import zlib
 
 
 class Client:
-    def __init__(self, host="172.25.25.25", data_port=8000, status_port=8080):
+    def __init__(self, host="172.25.25.30", data_port=8000, status_port=8080):
         self.server_type = "UDP"
         # host and port config
         self.host = host
@@ -72,6 +72,7 @@ class Client:
                 print("Message ", message)
                 if len(message) >= 2:
                     self.status_setter(self.byte_to_status[message[-2:]])
+                    # print(message)
                 print("Server: ", self.server_ready)
             except ConnectionAbortedError:
                 print("Status-receiver offline: Server connection lost")

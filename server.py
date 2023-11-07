@@ -1,4 +1,6 @@
+import os
 import socket
+import sys
 import threading
 import time
 import re
@@ -81,7 +83,10 @@ class CameraServer:
         self.server_should_close = False
 
     def init_camera(self):
-        self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # direct show  CAP_DSHOW
+        if sys.platform == 'linux':
+            self.camera = cv2.VideoCapture(0, cv2.CAP_V4L2)  # direct show  CAP_DSHOW
+        else:
+            self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # direct show  CAP_DSHOW
         if self.camera.isOpened():
             print("Camera is Online.")
         else:
@@ -93,12 +98,29 @@ class CameraServer:
         self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)  # height
 
     def close_camera(self):
-        self.camera.release()
-        print("Camera is Offline")
-        self.camera = None
+        if self.camera:
+            self.camera.release()
+            print("Camera is Offline")
+            self.camera = None
+        else:
+            pass
+
+    def reset(self, trigger=None):
+        print(f"Reset all connections. <Trigger: {trigger}>")
+        self.status_socket = None
+        if self.server_type == "TCP":
+            self.data_socket = None
+        elif self.server_type == "UDP":
+            # self.data_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # self.data_server.bind((self.host, self.data_port))
+            self.data_socket = None
+        self.close_camera()
 
     def test_camera(self):
-        self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # direct show  CAP_DSHOW  CAP_V4L2
+        if sys.platform == 'linux':
+            self.camera = cv2.VideoCapture(0, cv2.CAP_V4L2)  # direct show  CAP_DSHOW
+        else:
+            self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # direct show  CAP_DSHOW
         if self.camera.isOpened():
             print("Camera Test Pass")
             self.camera.release()
@@ -185,7 +207,7 @@ class CameraServer:
                 # status-socket is alive, do nothing
                 time.sleep(1)
             # status service is closed
-            self.server_status[0] = False
+            self.reset(trigger="establish_status_connection")
 
     def establish_data_connection(self) -> None:
         """
@@ -206,7 +228,7 @@ class CameraServer:
                     # data-socket is alive, do nothing
                     time.sleep(1)
                 # data service is closed
-                self.server_status[1] = False
+                self.reset(trigger="establish_data_connection")
             elif self.server_type == "UDP":
                 message, self.address = self.data_server.recvfrom(1024)
                 print("Message <establish_data_connection>: ", message, self.address)
@@ -220,10 +242,7 @@ class CameraServer:
                     # data-socket is alive, do nothing
                     time.sleep(1)
                 # data service is closed
-                self.server_status[1] = False
-                self.data_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                self.data_server.bind((self.host, self.data_port))
-                self.data_socket = None
+                self.reset(trigger="establish_data_connection")
 
     def send_data(self):
         if self.server_type == "TCP":
@@ -262,7 +281,7 @@ class CameraServer:
                         for pack in data_to_send:
                             self.data_socket.sendto(pack, self.address)
                         # self.data_socket.sendto(b'done')
-                        print("send one frame.")
+                        # print("send one frame.")
                         # self.server_ready = True
                     else:
                         pass
@@ -324,7 +343,7 @@ class CameraServer:
                     # connection is alive, do nothing
                     time.sleep(1)
                 # stream is stopped
-                self.server_status[2] = False
+                self.reset(trigger="establish_stream_service")
             else:
                 # wait
                 time.sleep(1)
@@ -339,13 +358,22 @@ class CameraServer:
                 time.sleep(1)
             else:
                 # camera is ready, capture buffer
-                buffer = self.zip_frame(cv2.imencode(".jpg", self.camera.read()[1])[1])
-                self.buffer.append(buffer)
-                # discard redundant buffer
-                if len(self.buffer) >= 60:
-                    self.buffer = self.buffer[-60:]
-                # fps limit
-                time.sleep(1 / self.fps)
+                try:
+                    assert self.camera.isOpened() is True
+                    buffer = self.zip_frame(cv2.imencode(".jpg", self.camera.read()[1])[1])
+                    self.buffer.append(buffer)
+                    # discard redundant buffer
+                    if len(self.buffer) >= 60:
+                        self.buffer = self.buffer[-60:]
+                    # fps limit
+                    time.sleep(1 / self.fps)
+                except AssertionError:
+                    print("Camera Error! Restarting...", file=sys.stderr)
+                    self.close_camera()
+                    time.sleep(1)
+                    self.init_camera()
+                    time.sleep(1)
+
         # connection is closed, close camera
         if self.camera:
             self.close_camera()
