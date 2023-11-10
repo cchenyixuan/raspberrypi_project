@@ -9,7 +9,7 @@ import zlib
 
 
 class Client:
-    def __init__(self, host="172.25.25.30", data_port=8000, status_port=8080):
+    def __init__(self, host="172.25.25.30", data_port=9999, status_port=19999):
         self.server_type = "UDP"
         # host and port config
         self.host = host
@@ -33,6 +33,8 @@ class Client:
         self.status_to_byte = {(False, False): b"00", (True, False): b"10", (False, True): b"01", (True, True): b"11"}
         self.byte_to_status = {b"00": (False, False), b"10": (True, False), b"01": (False, True), b"11": (True, True)}
         self.status_changed = True
+        self.platform_degrees = [0.0, 0.0]
+        self.platform_degrees_delta = [0.0, 0.0]
         # data received and cache
         self.buffer = []
         self.cache = b""
@@ -55,14 +57,14 @@ class Client:
     def send_status(self):
         while self.status_socket:
             try:
-                self.status_socket.sendall(self.status_to_byte[(self.server_ready, self.client_ready)])
+                self.status_socket.sendall(bytes(f'{str(round(self.platform_degrees[0], 2)).zfill(6)} {str(round(self.platform_degrees[1], 2)).zfill(6)}', encoding='utf-8'))
             except ConnectionAbortedError:
                 print("Status-sender offline: Server connection lost")
                 break
             except ConnectionResetError:
                 print("Status-sender offline: Server connection reset")
                 break
-            time.sleep(60)
+            time.sleep(0.01)
 
     def receive_status(self):
         # mark server as ready when receive "ServerReady"
@@ -70,10 +72,7 @@ class Client:
             try:
                 message = self.status_socket.recv(1024)
                 print("Message ", message)
-                if len(message) >= 2:
-                    self.status_setter(self.byte_to_status[message[-2:]])
-                    # print(message)
-                print("Server: ", self.server_ready)
+                print(f'Server camera-angles {[float(degree) for degree in str(message, encoding="utf-8")[-13:].split(" ")]}.')
             except ConnectionAbortedError:
                 print("Status-receiver offline: Server connection lost")
                 break
@@ -133,6 +132,20 @@ class Client:
                     print("Stream data not complete, retrying...")
             else:
                 time.sleep(0.01)
+        # set window callback
+        cv2.namedWindow("Camera0")
+
+        def mouse_clb(*event):
+            if event[0] == 1:
+                self.platform_degrees_delta = [-(event[1] - 400) / 400 * 90, min(40, (event[2] - 300) / 300 * 90)]
+            if event[3] == 1:
+                delta = [-(event[1] - 400) / 400 * 90, min(40, (event[2] - 300) / 300 * 90)]
+                self.platform_degrees = [
+                    min(max(self.platform_degrees[0] + delta[0] - self.platform_degrees_delta[0], -90), 90),
+                    min(max(self.platform_degrees[1] + delta[1] - self.platform_degrees_delta[1], -90), 40)]
+                self.platform_degrees_delta = delta
+
+        cv2.setMouseCallback("Camera0", mouse_clb)
         # endless render
         correct = 0
         total = 0
@@ -154,6 +167,8 @@ class Client:
                 # frame will not be updated
                 pass
             cv2.imshow('Camera0', cv2.imdecode(np.frombuffer(frame_buffer, dtype=np.uint8), 1))
+
+
             if total % 600 == 0 and total != 0:
                 print(f"Accuracy: {correct / total}, correct: {correct}, total: {total}")
             if cv2.waitKey(1) & 0xFF == ord('q'):

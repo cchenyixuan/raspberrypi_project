@@ -8,18 +8,24 @@ import numpy as np
 import cv2
 from zlib import compress, decompress
 
+from cloud_platform import CloudPlatform
+
 
 class CameraServer:
-    def __init__(self, fps=30, width=400, height=400, host="172.25.25.25", data_port=8000, status_port=8080):
+    def __init__(self, fps=30, width=800, height=600, host="172.25.25.30", data_port=9999, status_port=19999):
         self.buffer = []
 
         self.server_type = "UDP"
+        # camera angles X and Y axis
+        self.camera_angles = [0.0, 0.0]
+        self.platform = CloudPlatform()
+        self.platform(self.camera_angles)
+        time.sleep(1)
+        print("Platform Ready.")
 
         self.client_ready = False  # client is ready to receive data(client-tmp-buffer is empty)
         self.server_ready = False  # buffer is not empty
-        self.status_to_byte = {(False, False): b"00", (True, False): b"10", (False, True): b"01", (True, True): b"11"}
-        self.byte_to_status = {b"00": (False, False), b"10": (True, False), b"01": (False, True), b"11": (True, True)}
-        self.status_changed = True
+        self.status_changed = False
         # status, data, stream service states
         self.server_status = [False, False, False]
         self.should_print_underline = False
@@ -49,7 +55,6 @@ class CameraServer:
         elif self.server_type == "UDP":
             self.data_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.data_server.bind((self.host, self.data_port))
-            self.address = None
             self.data_socket = None
         # measurement
         self.data_socket_bytes_flux = 0
@@ -59,9 +64,9 @@ class CameraServer:
 
     def init_camera(self):
         if sys.platform == 'linux':
-            self.camera = cv2.VideoCapture(0, cv2.CAP_V4L2)
+            self.camera = cv2.VideoCapture(0, cv2.CAP_V4L2)  # direct show  CAP_DSHOW
         else:
-            self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+            self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # direct show  CAP_DSHOW
         if self.camera.isOpened():
             print("Camera is Online.")
         else:
@@ -89,13 +94,15 @@ class CameraServer:
             # self.data_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             # self.data_server.bind((self.host, self.data_port))
             self.data_socket = None
+        self.camera_angles = [0.0, 0.0]
+        self.platform(self.camera_angles)
         self.close_camera()
 
     def test_camera(self):
         if sys.platform == 'linux':
-            self.camera = cv2.VideoCapture(0, cv2.CAP_V4L2)
+            self.camera = cv2.VideoCapture(0, cv2.CAP_V4L2)  # direct show  CAP_DSHOW
         else:
-            self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+            self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # direct show  CAP_DSHOW
         if self.camera.isOpened():
             print("Camera Test Pass")
             self.camera.release()
@@ -110,8 +117,11 @@ class CameraServer:
         # send "ServerReady" if server is ready
         while self.status_socket:
             try:
-                self.status_socket_bytes_flux += 2
-                self.status_socket.sendall(self.status_to_byte[(self.server_ready, self.client_ready)])
+                if self.status_changed:
+                    # camera angle is changed by client
+                    self.status_socket_bytes_flux += 13
+                    self.status_socket.sendall(bytes(f'{str(round(self.camera_angles[0], 2)).zfill(6)} {str(round(self.camera_angles[1], 2)).zfill(6)}', encoding='utf-8'))
+                    self.status_changed = False
             except ConnectionAbortedError:
                 print("Client status connection lost")
                 print("Stop sending status")
@@ -128,7 +138,7 @@ class CameraServer:
             except BrokenPipeError:
                 self.status_socket = None
                 break
-            time.sleep(1.0)
+            time.sleep(0.1)
 
     def receive_status(self):
         # mark client as ready when receive "ClientReady"
@@ -136,12 +146,12 @@ class CameraServer:
             try:
                 message = self.status_socket.recv(1024)
                 print("Message ", message)
-                if len(message) >= 2:
-                    client_new_flag = self.byte_to_status[message[-2:]][1]
-                    if self.client_ready != client_new_flag:
-                        self.status_changed = True
-                        self.client_ready = client_new_flag
-                print("Client: ", self.client_ready)
+                new_camera_angles = [float(degree) for degree in str(message, encoding='utf-8')[-13:].split(" ")]
+                if new_camera_angles[0] != self.camera_angles[0] or new_camera_angles[1] != self.camera_angles[1]:
+                    self.camera_angles = new_camera_angles
+                    self.status_changed = True
+                    self.platform(self.camera_angles)
+                    print(f"New camera-angle is set to {self.camera_angles[0]} {self.camera_angles[1]}.")
 
             except ConnectionAbortedError:
                 print("Client status connection lost")
@@ -159,7 +169,10 @@ class CameraServer:
             except BrokenPipeError:
                 self.status_socket = None
                 break
-            time.sleep(1.0)
+            except ValueError:
+                self.status_socket = None
+                break
+            time.sleep(0.01)
 
     def establish_status_connection(self) -> None:
         """
@@ -255,6 +268,7 @@ class CameraServer:
                         data_to_send = self.slice_data_udp(self.buffer.pop(0), 4096*10)
                         for pack in data_to_send:
                             self.data_socket.sendto(pack, self.address)
+                        # self.data_socket.sendto(b'done')
                         # print("send one frame.")
                         # self.server_ready = True
                     else:
@@ -380,7 +394,7 @@ class CameraServer:
             preview = True
             while preview:
                 if self.buffer and self.camera:
-                    cv2.imshow('C0', cv2.imdecode(np.frombuffer(self.unzip_frame(self.buffer[-1]), dtype=np.uint8), -1))
+                    cv2.imshow('Camera0', cv2.imdecode(np.frombuffer(self.unzip_frame(self.buffer[-1]), dtype=np.uint8), -1))
                     time.sleep(1/self.fps)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     print("Camera stopped by keyboard control.")
@@ -428,17 +442,32 @@ class CameraServer:
         measurer.daemon = True
         measurer.start()
         # preview thread
-        preview = threading.Thread(target=self.preview)
-        preview.daemon = True
-        preview.start()
+        # preview = threading.Thread(target=self.preview)
+        # preview.daemon = True
+        # preview.start()
         # server loop
         self.server_ready = True
         while not self.server_should_close:
             time.sleep(1)
-        self.reset(trigger="server_should_close")
+
+
+class Server:
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.bind((self.host, self.port))
+        self.server.listen()
+        self.socket = None
 
 
 if __name__ == "__main__":
     camera_server = CameraServer()
     camera_server()
+
+
     ...
+
+
+
+
