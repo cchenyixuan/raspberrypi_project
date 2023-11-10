@@ -9,7 +9,7 @@ import zlib
 
 
 class Client:
-    def __init__(self, host="172.25.25.30", data_port=9999, status_port=19999):
+    def __init__(self, host="172.25.25.30", data_port=8777, status_port=8778):
         self.server_type = "UDP"
         # host and port config
         self.host = host
@@ -92,7 +92,7 @@ class Client:
                     data = self.data_socket.recv(1024)
                 elif self.server_type == "UDP":
                     data, server = self.data_socket.recvfrom(4096*10)
-                    # print(len(data), data[-10:], server)
+                    print(len(data), data[-10:], server)
                 # if data is received
                 if data[-4:-2] == data[-2:]:
                     # one frame is received
@@ -137,9 +137,9 @@ class Client:
 
         def mouse_clb(*event):
             if event[0] == 1:
-                self.platform_degrees_delta = [-(event[1] - 400) / 400 * 90, min(40, (event[2] - 300) / 300 * 90)]
+                self.platform_degrees_delta = [-(event[1] - 200) / 200 * 90, min(40, (event[2] - 200) / 200 * 90)]
             if event[3] == 1:
-                delta = [-(event[1] - 400) / 400 * 90, min(40, (event[2] - 300) / 300 * 90)]
+                delta = [-(event[1] - 200) / 200 * 90, min(40, (event[2] - 200) / 200 * 90)]
                 self.platform_degrees = [
                     min(max(self.platform_degrees[0] + delta[0] - self.platform_degrees_delta[0], -90), 90),
                     min(max(self.platform_degrees[1] + delta[1] - self.platform_degrees_delta[1], -90), 40)]

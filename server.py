@@ -12,7 +12,7 @@ from cloud_platform import CloudPlatform
 
 
 class CameraServer:
-    def __init__(self, fps=30, width=800, height=600, host="172.25.25.30", data_port=9999, status_port=19999):
+    def __init__(self, fps=30, width=800, height=600, host="172.25.25.30", data_port=8777, status_port=8778):
         self.buffer = []
 
         self.server_type = "UDP"
@@ -97,6 +97,7 @@ class CameraServer:
         self.camera_angles = [0.0, 0.0]
         self.platform(self.camera_angles)
         self.close_camera()
+        self.buffer = []
 
     def test_camera(self):
         if sys.platform == 'linux':
@@ -144,7 +145,7 @@ class CameraServer:
         # mark client as ready when receive "ClientReady"
         while self.status_socket:
             try:
-                message = self.status_socket.recv(1024)
+                message = self.status_socket.recv(1024*16)
                 print("Message ", message)
                 new_camera_angles = [float(degree) for degree in str(message, encoding='utf-8')[-13:].split(" ")]
                 if new_camera_angles[0] != self.camera_angles[0] or new_camera_angles[1] != self.camera_angles[1]:
@@ -170,6 +171,8 @@ class CameraServer:
                 self.status_socket = None
                 break
             except ValueError:
+                print("Client status value error")
+                print("Stop receiving status")
                 self.status_socket = None
                 break
             time.sleep(0.01)
