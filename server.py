@@ -12,7 +12,7 @@ from cloud_platform import CloudPlatform
 
 
 class CameraServer:
-    def __init__(self, fps=30, width=800, height=600, host="172.25.25.30", data_port=8777, status_port=8778):
+    def __init__(self, fps=30, width=400, height=400, host="192.168.0.103", data_port=8777, status_port=8778):
         self.buffer = []
 
         self.server_type = "UDP"
@@ -61,6 +61,7 @@ class CameraServer:
         self.status_socket_bytes_flux = 0
         # controllers
         self.server_should_close = False
+        self.count = 0
 
     def init_camera(self):
         if sys.platform == 'linux':
@@ -98,6 +99,8 @@ class CameraServer:
         self.platform(self.camera_angles)
         self.close_camera()
         self.buffer = []
+        print(self.count)
+        self.count = 0
 
     def test_camera(self):
         if sys.platform == 'linux':
@@ -146,7 +149,7 @@ class CameraServer:
         while self.status_socket:
             try:
                 message = self.status_socket.recv(1024*16)
-                print("Message ", message)
+                # print("Message ", message)
                 new_camera_angles = [float(degree) for degree in str(message, encoding='utf-8')[-13:].split(" ")]
                 if new_camera_angles[0] != self.camera_angles[0] or new_camera_angles[1] != self.camera_angles[1]:
                     self.camera_angles = new_camera_angles
@@ -171,8 +174,6 @@ class CameraServer:
                 self.status_socket = None
                 break
             except ValueError:
-                print("Client status value error")
-                print("Stop receiving status")
                 self.status_socket = None
                 break
             time.sleep(0.01)
@@ -223,6 +224,7 @@ class CameraServer:
             elif self.server_type == "UDP":
                 message, self.address = self.data_server.recvfrom(1024)
                 print("Message <establish_data_connection>: ", message, self.address)
+                self.width, self.height = [int(item) for item in str(message[-9:], encoding="utf-8").split(' ')]
                 self.data_socket = self.data_server
                 send_data = threading.Thread(target=self.send_data)
                 send_data.daemon = True
@@ -242,6 +244,7 @@ class CameraServer:
                     if self.buffer:
                         # print(len(self.buffer), len(self.buffer[0]))
                         self.data_socket_bytes_flux += len(self.buffer[0])
+                        self.count += 1
                         self.data_socket.sendall(self.buffer.pop(0))
                         self.data_socket.sendall(b'done')
                         # print("send one frame.")
@@ -268,6 +271,7 @@ class CameraServer:
                     if self.buffer:
                         # print(len(self.buffer), len(self.buffer[0]))
                         self.data_socket_bytes_flux += len(self.buffer[0])
+                        self.count += 1
                         data_to_send = self.slice_data_udp(self.buffer.pop(0), 4096*10)
                         for pack in data_to_send:
                             self.data_socket.sendto(pack, self.address)
@@ -289,7 +293,6 @@ class CameraServer:
                 except BrokenPipeError:
                     self.data_socket = None
                     break
-                time.sleep(0.01)
 
     @staticmethod
     def slice_data_udp(data, pack_size=4096):
@@ -356,8 +359,6 @@ class CameraServer:
                     # discard redundant buffer
                     if len(self.buffer) >= 60:
                         self.buffer = self.buffer[-60:]
-                    # fps limit
-                    time.sleep(1 / self.fps)
                 except AssertionError:
                     print("Camera Error! Restarting...", file=sys.stderr)
                     self.close_camera()

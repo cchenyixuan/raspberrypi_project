@@ -1,3 +1,4 @@
+import email.message
 import socket
 import threading
 import time
@@ -9,8 +10,10 @@ import zlib
 
 
 class Client:
-    def __init__(self, host="172.25.25.30", data_port=8777, status_port=8778):
+    def __init__(self, host="192.168.0.103", data_port=8777, status_port=8778):
         self.server_type = "UDP"
+        self.width = 720
+        self.height = 640
         # host and port config
         self.host = host
         self.data_port = data_port
@@ -25,14 +28,12 @@ class Client:
             self.data_socket.connect((self.host, self.data_port))
         elif self.server_type == "UDP":
             self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.data_socket.sendto(b'Hello Server', (host, data_port))
+            self.data_socket.sendto(bytes(f'Hello Server {str(self.width).zfill(4)} {str(self.height).zfill(4)}', encoding='utf-8'), (host, data_port))
 
         # server client status
         self.server_ready = False
         self.client_ready = False
-        self.status_to_byte = {(False, False): b"00", (True, False): b"10", (False, True): b"01", (True, True): b"11"}
-        self.byte_to_status = {b"00": (False, False), b"10": (True, False), b"01": (False, True), b"11": (True, True)}
-        self.status_changed = True
+
         self.platform_degrees = [0.0, 0.0]
         self.platform_degrees_delta = [0.0, 0.0]
         # data received and cache
@@ -41,18 +42,6 @@ class Client:
         self.tmp = []
         # console message
         print("Connection established.")
-
-    def status_setter(self, flag: tuple[bool, bool]):
-        """
-        Judge if status changed and set all status
-        :param flag: tuple[server_ready, client_ready]
-        :return: None
-        """
-        if (self.server_ready, self.client_ready) != flag:
-            self.server_ready, self.client_ready = flag
-            self.status_changed = True
-        else:
-            pass
 
     def send_status(self):
         while self.status_socket:
@@ -92,12 +81,12 @@ class Client:
                     data = self.data_socket.recv(1024)
                 elif self.server_type == "UDP":
                     data, server = self.data_socket.recvfrom(4096*10)
-                    print(len(data), data[-10:], server)
+                    # print(len(data), data[-10:], server)
                 # if data is received
                 if data[-4:-2] == data[-2:]:
                     # one frame is received
                     self.tmp.append(data)
-                    self.buffer.append(b''.join([pack[:-6] for pack in self.tmp if pack[-6:-4] == data[-6:-4]]))
+                    self.buffer.append(b''.join((pack[:-6] for pack in self.tmp if pack[-6:-4] == data[-6:-4])))
                     # print("received one frame by <receive data>", len(self.buffer))
                     self.tmp = []
                     # self.status_setter((self.server_ready, True))
@@ -137,9 +126,9 @@ class Client:
 
         def mouse_clb(*event):
             if event[0] == 1:
-                self.platform_degrees_delta = [-(event[1] - 200) / 200 * 90, min(40, (event[2] - 200) / 200 * 90)]
+                self.platform_degrees_delta = [-(event[1] - self.width/2) / (self.width/2) * 90, min(40, (event[2] - self.height/2) / (self.height/2) * 90)]
             if event[3] == 1:
-                delta = [-(event[1] - 200) / 200 * 90, min(40, (event[2] - 200) / 200 * 90)]
+                delta = [-(event[1] - self.width/2) / (self.width/2) * 90, min(40, (event[2] - self.height/2) / (self.height/2) * 90)]
                 self.platform_degrees = [
                     min(max(self.platform_degrees[0] + delta[0] - self.platform_degrees_delta[0], -90), 90),
                     min(max(self.platform_degrees[1] + delta[1] - self.platform_degrees_delta[1], -90), 40)]
@@ -149,6 +138,7 @@ class Client:
         # endless render
         correct = 0
         total = 0
+        start = time.time()
         while True:
             # discard older data
             if len(self.buffer) >= 60:
@@ -179,8 +169,8 @@ class Client:
                 #     self.data_socket.close()
                 print(f"Accuracy: {correct / total}, correct: {correct}, total: {total}")
                 break
-            time.sleep(0.01)
         self.stop()
+        print(time.time()-start, total/(time.time()-start))
 
     def stop(self):
         # Destroy all the windows
