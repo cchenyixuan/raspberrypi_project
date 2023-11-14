@@ -1,16 +1,13 @@
-import email.message
 import socket
 import threading
 import time
-import re
 import numpy as np
 import cv2
 from zlib import compress, decompress
-import zlib
 
 
 class Client:
-    def __init__(self, host="192.168.0.103", data_port=8777, status_port=8778):
+    def __init__(self, host="172.25.25.30", data_port=8877, status_port=8878):
         self.server_type = "UDP"
         self.width = 720
         self.height = 640
@@ -26,13 +23,10 @@ class Client:
         if self.server_type == "TCP":
             self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.data_socket.connect((self.host, self.data_port))
+            self.data_socket.sendall(bytes(f'Hello Server {str(self.width).zfill(4)} {str(self.height).zfill(4)}', encoding='utf-8'))
         elif self.server_type == "UDP":
             self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.data_socket.sendto(bytes(f'Hello Server {str(self.width).zfill(4)} {str(self.height).zfill(4)}', encoding='utf-8'), (host, data_port))
-
-        # server client status
-        self.server_ready = False
-        self.client_ready = False
 
         self.platform_degrees = [0.0, 0.0]
         self.platform_degrees_delta = [0.0, 0.0]
@@ -76,23 +70,34 @@ class Client:
             # receive data
             try:
                 # receive data from data socket
-                # self.data_socket.settimeout(1)
+                data = b""
                 if self.server_type == "TCP":
                     data = self.data_socket.recv(1024)
+                    # if data is received
+                    if data[-4:] == b'done':
+                        # one frame is received
+                        self.tmp.append(data[:-4])
+                        self.buffer.append(b''.join(self.tmp))
+                        # print("received one frame by <receive data>", len(self.buffer))
+                        self.tmp = []
+                        # self.status_setter((self.server_ready, True))
+                    else:
+                        # continue receiving
+                        self.tmp.append(data)
                 elif self.server_type == "UDP":
                     data, server = self.data_socket.recvfrom(4096*10)
                     # print(len(data), data[-10:], server)
-                # if data is received
-                if data[-4:-2] == data[-2:]:
-                    # one frame is received
-                    self.tmp.append(data)
-                    self.buffer.append(b''.join((pack[:-6] for pack in self.tmp if pack[-6:-4] == data[-6:-4])))
-                    # print("received one frame by <receive data>", len(self.buffer))
-                    self.tmp = []
-                    # self.status_setter((self.server_ready, True))
-                else:
-                    # continue receiving
-                    self.tmp.append(data)
+                    # if data is received
+                    if data[-4:-2] == data[-2:]:
+                        # one frame is received
+                        self.tmp.append(data)
+                        self.buffer.append(b''.join((pack[:-6] for pack in self.tmp if pack[-6:-4] == data[-6:-4])))
+                        # print("received one frame by <receive data>", len(self.buffer))
+                        self.tmp = []
+                        # self.status_setter((self.server_ready, True))
+                    else:
+                        # continue receiving
+                        self.tmp.append(data)
             except ConnectionAbortedError:
                 print("Data-receiver offline: Server connection lost")
                 break
@@ -158,7 +163,6 @@ class Client:
                 pass
             cv2.imshow('Camera0', cv2.imdecode(np.frombuffer(frame_buffer, dtype=np.uint8), 1))
 
-
             if total % 600 == 0 and total != 0:
                 print(f"Accuracy: {correct / total}, correct: {correct}, total: {total}")
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -188,7 +192,6 @@ class Client:
         return decompress(buffer)
 
     def __call__(self, *args, **kwargs):
-        self.client_ready = True
         send_status = threading.Thread(target=self.send_status)
         send_status.start()
         receive_status = threading.Thread(target=self.receive_status)

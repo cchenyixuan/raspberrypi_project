@@ -1,9 +1,7 @@
-import os
 import socket
 import sys
 import threading
 import time
-import re
 import numpy as np
 import cv2
 from zlib import compress, decompress
@@ -23,12 +21,7 @@ class CameraServer:
         time.sleep(1)
         print("Platform Ready.")
 
-        self.client_ready = False  # client is ready to receive data(client-tmp-buffer is empty)
-        self.server_ready = False  # buffer is not empty
         self.status_changed = False
-        # status, data, stream service states
-        self.server_status = [False, False, False]
-        self.should_print_underline = False
 
         self.fps = fps
         self.width = width
@@ -56,7 +49,8 @@ class CameraServer:
             self.data_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.data_server.bind((self.host, self.data_port))
             self.data_socket = None
-        # measurement
+            self.address = None
+            # measurement
         self.data_socket_bytes_flux = 0
         self.status_socket_bytes_flux = 0
         # controllers
@@ -124,7 +118,11 @@ class CameraServer:
                 if self.status_changed:
                     # camera angle is changed by client
                     self.status_socket_bytes_flux += 13
-                    self.status_socket.sendall(bytes(f'{str(round(self.camera_angles[0], 2)).zfill(6)} {str(round(self.camera_angles[1], 2)).zfill(6)}', encoding='utf-8'))
+                    message = bytes(
+                        f'{str(round(self.camera_angles[0], 2)).zfill(6)} {str(round(self.camera_angles[1], 2)).zfill(6)}',
+                        encoding='utf-8'
+                    )
+                    self.status_socket.sendall(message)
                     self.status_changed = False
             except ConnectionAbortedError:
                 print("Client status connection lost")
@@ -194,7 +192,6 @@ class CameraServer:
             send_status.start()
             receive_status.start()
             # status service is opened
-            self.server_status[0] = True
             while self.status_socket:
                 # status-socket is alive, do nothing
                 time.sleep(1)
@@ -211,11 +208,14 @@ class CameraServer:
                 self.data_socket, addr = self.data_server.accept()
                 # following codes will not be run until a client connects this server
                 print(f"Data server connected by {addr}")
+                # receive greetings and settings
+                message = self.data_socket.recv(1024)
+                self.width, self.height = [int(item) for item in str(message[-9:], encoding="utf-8").split(' ')]
+                print(f"Width, Height set to {self.width} {self.height}")
                 send_data = threading.Thread(target=self.send_data)
                 send_data.daemon = True
                 send_data.start()
                 # data service is opened
-                self.server_status[1] = True
                 while self.data_socket:
                     # data-socket is alive, do nothing
                     time.sleep(1)
@@ -225,12 +225,12 @@ class CameraServer:
                 message, self.address = self.data_server.recvfrom(1024)
                 print("Message <establish_data_connection>: ", message, self.address)
                 self.width, self.height = [int(item) for item in str(message[-9:], encoding="utf-8").split(' ')]
+                print(f"Width, Height set to {self.width} {self.height}")
                 self.data_socket = self.data_server
                 send_data = threading.Thread(target=self.send_data)
                 send_data.daemon = True
                 send_data.start()
                 # data service is opened
-                self.server_status[1] = True
                 while self.data_socket:
                     # data-socket is alive, do nothing
                     time.sleep(1)
@@ -275,7 +275,7 @@ class CameraServer:
                         data_to_send = self.slice_data_udp(self.buffer.pop(0), 4096*10)
                         for pack in data_to_send:
                             self.data_socket.sendto(pack, self.address)
-                        # self.data_socket.sendto(b'done')
+                        # self.data_socket.sendto(b"done")
                         # print("send one frame.")
                         # self.server_ready = True
                     else:
@@ -302,12 +302,12 @@ class CameraServer:
         :param pack_size: slice-size
         :return: packs sliced
         """
+        pack_length = len(data) // pack_size + bool(len(data) % pack_size)
         packs = []
         salt = np.random.randint(10, 99)
         while data:
             packs.append(data[:pack_size-6]+bytes(f'{salt}'+f'{len(packs)}'.zfill(4), encoding='utf-8'))
             data = data[pack_size-6:]
-
         for step in range(len(packs)):
             packs[step] = packs[step][:-4]+bytes(f'{len(packs)-1}'.zfill(2), encoding='utf-8')+packs[step][-2:]
         return packs
@@ -332,7 +332,6 @@ class CameraServer:
                 stream.daemon = True
                 stream.start()
                 # stream is opened
-                self.server_status[2] = True
                 while self.status_socket and self.data_socket:
                     # connection is alive, do nothing
                     time.sleep(1)
@@ -420,7 +419,8 @@ class CameraServer:
                 while time.time() - start < 1.0:
                     time.sleep(0.01)
                 print(
-                    f"NetworkFlux: {round((self.data_socket_bytes_flux + self.status_socket_bytes_flux) / (time.time() - start) / 1024, 3)} kb/s DataFlux: {round(self.data_socket_bytes_flux / (time.time() - start) / 1024, 3)} kb/s  StatusFlux: {round(self.status_socket_bytes_flux / (time.time() - start) / 1024, 3)} kb/s RemainingBuffer: {len(self.buffer)}")
+                    f"NetworkFlux: {round((self.data_socket_bytes_flux + self.status_socket_bytes_flux) / (time.time() - start) / 1024, 3)} kb/s DataFlux: {round(self.data_socket_bytes_flux / (time.time() - start) / 1024, 3)} kb/s  StatusFlux: {round(self.status_socket_bytes_flux / (time.time() - start) / 1024, 3)} kb/s RemainingBuffer: {len(self.buffer)}"
+                )
                 time.sleep(1.0)
             else:
                 # wait
@@ -450,7 +450,6 @@ class CameraServer:
         # preview.daemon = True
         # preview.start()
         # server loop
-        self.server_ready = True
         while not self.server_should_close:
             time.sleep(1)
 
@@ -468,10 +467,3 @@ class Server:
 if __name__ == "__main__":
     camera_server = CameraServer()
     camera_server()
-
-
-    ...
-
-
-
-
