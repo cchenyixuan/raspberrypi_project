@@ -1,16 +1,18 @@
 import socket
 import threading
 import time
+import traceback
+
 import numpy as np
 import cv2
 from zlib import compress, decompress
 
 
 class Client:
-    def __init__(self, host="172.25.25.30", data_port=8877, status_port=8878):
+    def __init__(self, host="192.168.0.103", data_port=8877, status_port=8878):
         self.server_type = "UDP"
-        self.width = 720
-        self.height = 640
+        self.width = 1024
+        self.height = 768
         # host and port config
         self.host = host
         self.data_port = data_port
@@ -91,7 +93,13 @@ class Client:
                     if data[-4:-2] == data[-2:]:
                         # one frame is received
                         self.tmp.append(data)
-                        self.buffer.append(b''.join((pack[:-6] for pack in self.tmp if pack[-6:-4] == data[-6:-4])))
+                        packs = [pack for pack in self.tmp if pack[-6:-4] == data[-6:-4]]
+                        sorted_packs = [b'' for _ in range(int(data[-6:-4])+1)]
+                        for pack in packs:
+                            index = int(pack[-2:])
+                            sorted_packs[index] = pack[:-6]
+                        self.buffer.append(b''.join(sorted_packs))
+                        # self.buffer.append(b''.join((pack[:-6] for pack in self.tmp if pack[-6:-4] == data[-6:-4])))
                         # print("received one frame by <receive data>", len(self.buffer))
                         self.tmp = []
                         # self.status_setter((self.server_ready, True))
@@ -119,7 +127,7 @@ class Client:
                 frame = self.buffer.pop(0)
                 print("Stream Incoming...")
                 try:
-                    frame_buffer = self.unzip_frame(frame)
+                    frame_buffer = np.frombuffer(frame, dtype=np.uint8)  # self.unzip_frame(frame)
                     print("Stream Verified!")
                     break
                 except:  # zlib.error: Error -3 while decompressing data: incorrect header check
@@ -152,7 +160,7 @@ class Client:
             if len(self.buffer) >= 1:
                 frame = self.buffer.pop(0)
                 try:
-                    frame_buffer = self.unzip_frame(frame)
+                    frame_buffer = np.frombuffer(frame, dtype=np.uint8)  # self.unzip_frame(frame)
                     correct += 1
                     total += 1
                 except:  # zlib.error: Error -3 while decompressing data: incorrect header check
@@ -161,7 +169,10 @@ class Client:
             else:
                 # frame will not be updated
                 pass
-            cv2.imshow('Camera0', cv2.imdecode(np.frombuffer(frame_buffer, dtype=np.uint8), 1))
+            try:
+                cv2.imshow('Camera0', cv2.imdecode(frame_buffer, 1))
+            except:
+                traceback.print_exc()
 
             if total % 600 == 0 and total != 0:
                 print(f"Accuracy: {correct / total}, correct: {correct}, total: {total}")
@@ -174,7 +185,8 @@ class Client:
                 print(f"Accuracy: {correct / total}, correct: {correct}, total: {total}")
                 break
         self.stop()
-        print(time.time()-start, total/(time.time()-start))
+        end = time.time()
+        print(end-start, total/(end-start))
 
     def stop(self):
         # Destroy all the windows

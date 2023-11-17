@@ -2,6 +2,8 @@ import socket
 import sys
 import threading
 import time
+import traceback
+
 import numpy as np
 import cv2
 from zlib import compress, decompress
@@ -10,7 +12,7 @@ from cloud_platform import CloudPlatform
 
 
 class CameraServer:
-    def __init__(self, fps=30, width=400, height=400, host="192.168.0.103", data_port=8777, status_port=8778):
+    def __init__(self, fps=30, width=400, height=400, host="192.168.0.103", data_port=8877, status_port=8878):
         self.buffer = []
 
         self.server_type = "UDP"
@@ -66,11 +68,12 @@ class CameraServer:
             print("Camera is Online.")
         else:
             print("Camera Error!")
-        self.camera.set(cv2.CAP_PROP_FPS, self.fps)  # FPS
-        self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc('m', 'j', 'p', 'g'))
+
         self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc('M', 'J', 'P', 'G'))
         self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)  # width
         self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)  # height
+        self.camera.set(cv2.CAP_PROP_FPS, self.fps)  # FPS
+        print(f"Camera FPS: {self.camera.get(cv2.CAP_PROP_FPS)} Width: {self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)} Height: {self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)}.")
 
     def close_camera(self):
         if self.camera:
@@ -207,109 +210,84 @@ class CameraServer:
             if self.server_type == "TCP":
                 self.data_socket, addr = self.data_server.accept()
                 # following codes will not be run until a client connects this server
-                print(f"Data server connected by {addr}")
+                print(f"Message <establish_data_connection>: Data server connected by {addr}")
                 # receive greetings and settings
                 message = self.data_socket.recv(1024)
                 self.width, self.height = [int(item) for item in str(message[-9:], encoding="utf-8").split(' ')]
                 print(f"Width, Height set to {self.width} {self.height}")
-                send_data = threading.Thread(target=self.send_data)
-                send_data.daemon = True
-                send_data.start()
-                # data service is opened
-                while self.data_socket:
-                    # data-socket is alive, do nothing
-                    time.sleep(1)
-                # data service is closed
-                self.reset(trigger="establish_data_connection")
             elif self.server_type == "UDP":
                 message, self.address = self.data_server.recvfrom(1024)
                 print("Message <establish_data_connection>: ", message, self.address)
                 self.width, self.height = [int(item) for item in str(message[-9:], encoding="utf-8").split(' ')]
                 print(f"Width, Height set to {self.width} {self.height}")
                 self.data_socket = self.data_server
-                send_data = threading.Thread(target=self.send_data)
-                send_data.daemon = True
-                send_data.start()
-                # data service is opened
-                while self.data_socket:
-                    # data-socket is alive, do nothing
-                    time.sleep(1)
-                # data service is closed
-                self.reset(trigger="establish_data_connection")
+            # data-socket is ready, start sending data
+            send_data = threading.Thread(target=self.send_data)
+            send_data.daemon = True
+            send_data.start()
+            # data service is opened
+            while self.data_socket:
+                # data-socket is alive, do nothing
+                time.sleep(1)
+            # data service is closed
+            self.reset(trigger="establish_data_connection")
 
     def send_data(self):
-        if self.server_type == "TCP":
-            while self.data_socket:
-                try:
-                    if self.buffer:
-                        # print(len(self.buffer), len(self.buffer[0]))
-                        self.data_socket_bytes_flux += len(self.buffer[0])
-                        self.count += 1
-                        self.data_socket.sendall(self.buffer.pop(0))
+        while self.data_socket:
+            try:
+                if self.buffer:
+                    frame = cv2.imencode(".jpg", self.buffer.pop(0))[1].tobytes()
+                    self.data_socket_bytes_flux += len(frame)
+                    self.count += 1
+                    # TCP
+                    if self.server_type == "TCP":
+                        self.data_socket.sendall(frame)
                         self.data_socket.sendall(b'done')
-                        # print("send one frame.")
-                        # self.server_ready = True
-                    else:
-                        pass
-                except ConnectionAbortedError:
-                    print("Client data connection lost")
-                    print("Stop sending data")
-                    self.data_socket = None
-                    break
-                except ConnectionResetError:
-                    print("Client data connection lost")
-                    print("Stop sending data")
-                    self.data_socket = None
-                    break
-                except BrokenPipeError:
-                    self.data_socket = None
-                    break
-                time.sleep(0.01)
-        elif self.server_type == "UDP":
-            while self.data_socket:
-                try:
-                    if self.buffer:
-                        # print(len(self.buffer), len(self.buffer[0]))
-                        self.data_socket_bytes_flux += len(self.buffer[0])
-                        self.count += 1
-                        data_to_send = self.slice_data_udp(self.buffer.pop(0), 4096*10)
-                        for pack in data_to_send:
+                    # UDP
+                    if self.server_type == "UDP":
+                        for pack in self.slice_data_udp(frame, 4096 * 10):
                             self.data_socket.sendto(pack, self.address)
-                        # self.data_socket.sendto(b"done")
-                        # print("send one frame.")
-                        # self.server_ready = True
-                    else:
-                        pass
-                except ConnectionAbortedError:
-                    print("Client data connection lost")
-                    print("Stop sending data")
-                    self.data_socket = None
-                    break
-                except ConnectionResetError:
-                    print("Client data connection lost")
-                    print("Stop sending data")
-                    self.data_socket = None
-                    break
-                except BrokenPipeError:
-                    self.data_socket = None
-                    break
+                else:
+                    ...
+            except ConnectionAbortedError:
+                print("Client data connection lost")
+                print("Stop sending data")
+                self.data_socket = None
+                break
+            except ConnectionResetError:
+                print("Client data connection lost")
+                print("Stop sending data")
+                self.data_socket = None
+                break
+            except BrokenPipeError:
+                self.data_socket = None
+                break
+            except AttributeError:
+                self.data_socket = None
+                break
+            except Exception:
+                with open(r"log.txt", "a") as f:
+                    f.write(f"{time.ctime(time.time())}\n")
+                    traceback.print_exc(file=f)
+                    f.close()
+                print("Error saved to log.txt.")
+                self.data_socket = None
+                break
 
     @staticmethod
-    def slice_data_udp(data, pack_size=4096):
+    def slice_data_udp(data: bytes, pack_size=4096):
         """
         divide data to packs
         :param data: bytes
         :param pack_size: slice-size
         :return: packs sliced
         """
-        pack_length = len(data) // pack_size + bool(len(data) % pack_size)
-        packs = []
+        data_pack_size = pack_size - 6
+        pack_length = len(data) // data_pack_size + bool(len(data) % data_pack_size)
         salt = np.random.randint(10, 99)
-        while data:
-            packs.append(data[:pack_size-6]+bytes(f'{salt}'+f'{len(packs)}'.zfill(4), encoding='utf-8'))
-            data = data[pack_size-6:]
-        for step in range(len(packs)):
-            packs[step] = packs[step][:-4]+bytes(f'{len(packs)-1}'.zfill(2), encoding='utf-8')+packs[step][-2:]
+        packs = (data[step * data_pack_size: (step + 1) * data_pack_size] + bytes(
+            f'{salt}' + f'{pack_length - 1}'.zfill(2) + f'{step}'.zfill(2), encoding='utf-8') for step in
+                 range(pack_length))
         return packs
 
     @staticmethod
@@ -353,11 +331,10 @@ class CameraServer:
                 # camera is ready, capture buffer
                 try:
                     assert self.camera.isOpened() is True
-                    buffer = self.zip_frame(cv2.imencode(".jpg", self.camera.read()[1])[1])
-                    self.buffer.append(buffer)
+                    self.buffer.append(self.camera.read()[1])
                     # discard redundant buffer
-                    if len(self.buffer) >= 60:
-                        self.buffer = self.buffer[-60:]
+                    if len(self.buffer) >= 2:
+                        self.buffer = self.buffer[-2:]
                 except AssertionError:
                     print("Camera Error! Restarting...", file=sys.stderr)
                     self.close_camera()
@@ -387,6 +364,7 @@ class CameraServer:
         print(f"FPS is set to {self.fps}.")
 
     def stop(self):
+        time.sleep(1)
         self.camera.release()
         self.camera = None
         # Destroy all the windows
@@ -395,10 +373,11 @@ class CameraServer:
     def preview(self):
         while not self.server_should_close:
             preview = True
+            s = time.time()
+            count = 0
             while preview:
                 if self.buffer and self.camera:
-                    cv2.imshow('Camera0', cv2.imdecode(np.frombuffer(self.unzip_frame(self.buffer[-1]), dtype=np.uint8), -1))
-                    time.sleep(1/self.fps)
+                    cv2.imshow('Camera0', self.buffer[-1])
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     print("Camera stopped by keyboard control.")
                     break
