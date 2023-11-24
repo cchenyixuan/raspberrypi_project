@@ -9,10 +9,10 @@ from zlib import compress, decompress
 
 
 class Client:
-    def __init__(self, host="192.168.0.103", data_port=8877, status_port=8878):
+    def __init__(self, host="172.25.25.30", data_port=8004, status_port=8005):
         self.server_type = "UDP"
-        self.width = 1024
-        self.height = 768
+        self.width = 800
+        self.height = 600
         # host and port config
         self.host = host
         self.data_port = data_port
@@ -20,6 +20,8 @@ class Client:
         # status pipe line
         self.status_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.status_socket.connect((self.host, self.status_port))
+        print("Status connection established!")
+
         time.sleep(1)
         # data pipe line
         if self.server_type == "TCP":
@@ -29,7 +31,11 @@ class Client:
         elif self.server_type == "UDP":
             self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.data_socket.sendto(bytes(f'Hello Server {str(self.width).zfill(4)} {str(self.height).zfill(4)}', encoding='utf-8'), (host, data_port))
-
+            message, server = self.data_socket.recvfrom(1024)
+            print(message, server)
+            if message == b"Hello Client":
+                print("Data connection established! ")
+        time.sleep(1)
         self.platform_degrees = [0.0, 0.0]
         self.platform_degrees_delta = [0.0, 0.0]
         # data received and cache
@@ -37,7 +43,7 @@ class Client:
         self.cache = b""
         self.tmp = []
         # console message
-        print("Connection established.")
+        print("Initialized.")
 
     def send_status(self):
         while self.status_socket:
@@ -87,37 +93,43 @@ class Client:
                         # continue receiving
                         self.tmp.append(data)
                 elif self.server_type == "UDP":
-                    data, server = self.data_socket.recvfrom(4096*10)
-                    # print(len(data), data[-10:], server)
+                    data, server = self.data_socket.recvfrom(1024)
+                    print(len(data), str(data[-9:-6], encoding="utf-8"), str(data[-6:-3], encoding="utf-8"), str(data[-3:], encoding="utf-8"), data[-9:], server)
                     # if data is received
-                    if data[-4:-2] == data[-2:]:
+                    if data[-6:-3] == data[-3:]:
+
                         # one frame is received
                         self.tmp.append(data)
-                        packs = [pack for pack in self.tmp if pack[-6:-4] == data[-6:-4]]
-                        sorted_packs = [b'' for _ in range(int(data[-6:-4])+1)]
-                        for pack in packs:
-                            index = int(pack[-2:])
-                            sorted_packs[index] = pack[:-6]
-                        self.buffer.append(b''.join(sorted_packs))
-                        # self.buffer.append(b''.join((pack[:-6] for pack in self.tmp if pack[-6:-4] == data[-6:-4])))
-                        # print("received one frame by <receive data>", len(self.buffer))
-                        self.tmp = []
+                        packs = [pack for pack in self.tmp if pack[-9:-6] == data[-9:-6]]
+                        sorted_packs = [b'' for _ in range(int(data[-6:-3])+1)]
+                        if len(packs) != len(sorted_packs):
+                            print("incomplete!")
+                        else:
+                            for pack in packs:
+                                index = int(pack[-3:])
+                                sorted_packs[index] = pack[:-9]
+                            self.buffer.append(b''.join(sorted_packs))
+                            # self.buffer.append(b''.join((pack[:-6] for pack in self.tmp if pack[-6:-4] == data[-6:-4])))
+                            # print("received one frame by <receive data>", len(self.buffer))
+                            self.tmp = []
                         # self.status_setter((self.server_ready, True))
                     else:
                         # continue receiving
                         self.tmp.append(data)
             except ConnectionAbortedError:
-                print("Data-receiver offline: Server connection lost")
+                print("Data-receiver offline: Server connection lostCA")
                 break
             except ConnectionResetError:
-                print("Data-receiver offline: Server connection reset")
+                print("Data-receiver offline: Server connection resetC")
                 break
             except TimeoutError:
                 print("Data-receiver timeout! ")
                 self.tmp = []
                 # self.status_setter((self.server_ready, True))
-            except OSError:
-                print("Data-receiver offline: Server connection reset")
+            except OSError as e:
+                print(data)
+                print(e)
+                print("Data-receiver offline: Server connection resetO")
                 break
 
     def render_stream(self):
@@ -127,7 +139,7 @@ class Client:
                 frame = self.buffer.pop(0)
                 print("Stream Incoming...")
                 try:
-                    frame_buffer = np.frombuffer(frame, dtype=np.uint8)  # self.unzip_frame(frame)
+                    frame_buffer = self.unzip_frame(frame)
                     print("Stream Verified!")
                     break
                 except:  # zlib.error: Error -3 while decompressing data: incorrect header check
@@ -160,7 +172,7 @@ class Client:
             if len(self.buffer) >= 1:
                 frame = self.buffer.pop(0)
                 try:
-                    frame_buffer = np.frombuffer(frame, dtype=np.uint8)  # self.unzip_frame(frame)
+                    frame_buffer = self.unzip_frame(frame)
                     correct += 1
                     total += 1
                 except:  # zlib.error: Error -3 while decompressing data: incorrect header check
@@ -170,7 +182,7 @@ class Client:
                 # frame will not be updated
                 pass
             try:
-                cv2.imshow('Camera0', cv2.imdecode(frame_buffer, 1))
+                cv2.imshow('Camera0', cv2.imdecode(np.frombuffer(frame_buffer, dtype=np.uint8), 1))
             except:
                 traceback.print_exc()
 
@@ -192,6 +204,7 @@ class Client:
         # Destroy all the windows
         cv2.destroyAllWindows()
         # disconnect to server
+        self.status_socket.sendall(b"end end")
         self.status_socket = self.status_socket.close()  # None
         self.data_socket = self.data_socket.close()  # None
 

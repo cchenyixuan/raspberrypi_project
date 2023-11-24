@@ -12,7 +12,7 @@ from cloud_platform import CloudPlatform
 
 
 class CameraServer:
-    def __init__(self, fps=30, width=400, height=400, host="192.168.0.103", data_port=8877, status_port=8878):
+    def __init__(self, fps=60, width=400, height=400, host="172.25.25.30", data_port=8004, status_port=8005):
         self.buffer = []
 
         self.server_type = "UDP"
@@ -125,6 +125,8 @@ class CameraServer:
                         f'{str(round(self.camera_angles[0], 2)).zfill(6)} {str(round(self.camera_angles[1], 2)).zfill(6)}',
                         encoding='utf-8'
                     )
+
+                    self.status_socket.settimeout(5)
                     self.status_socket.sendall(message)
                     self.status_changed = False
             except ConnectionAbortedError:
@@ -176,6 +178,7 @@ class CameraServer:
                 break
             except ValueError:
                 self.status_socket = None
+                print("ValueError at receive status")
                 break
             time.sleep(0.01)
 
@@ -221,6 +224,7 @@ class CameraServer:
                 self.width, self.height = [int(item) for item in str(message[-9:], encoding="utf-8").split(' ')]
                 print(f"Width, Height set to {self.width} {self.height}")
                 self.data_socket = self.data_server
+                self.data_socket.sendto(b"Hello Client", self.address)
             # data-socket is ready, start sending data
             send_data = threading.Thread(target=self.send_data)
             send_data.daemon = True
@@ -236,7 +240,7 @@ class CameraServer:
         while self.data_socket:
             try:
                 if self.buffer:
-                    frame = cv2.imencode(".jpg", self.buffer.pop(0))[1].tobytes()
+                    frame = self.zip_frame(cv2.imencode(".jpg", self.buffer.pop(0))[1])
                     self.data_socket_bytes_flux += len(frame)
                     self.count += 1
                     # TCP
@@ -245,7 +249,11 @@ class CameraServer:
                         self.data_socket.sendall(b'done')
                     # UDP
                     if self.server_type == "UDP":
-                        for pack in self.slice_data_udp(frame, 4096 * 10):
+                        for pack in self.slice_data_udp(frame, 1024):
+                            #print(len(pack))
+                            #if len(pack) > 4096:
+                            #    print(pack)
+                            #    self.data_socket = None
                             self.data_socket.sendto(pack, self.address)
                 else:
                     ...
@@ -282,11 +290,11 @@ class CameraServer:
         :param pack_size: slice-size
         :return: packs sliced
         """
-        data_pack_size = pack_size - 6
+        data_pack_size = pack_size - 9
         pack_length = len(data) // data_pack_size + bool(len(data) % data_pack_size)
-        salt = np.random.randint(10, 99)
+        salt = np.random.randint(0, 999)
         packs = (data[step * data_pack_size: (step + 1) * data_pack_size] + bytes(
-            f'{salt}' + f'{pack_length - 1}'.zfill(2) + f'{step}'.zfill(2), encoding='utf-8') for step in
+            f'{salt}'.zfill(3) + f'{pack_length - 1}'.zfill(3) + f'{step}'.zfill(3), encoding='utf-8') for step in
                  range(pack_length))
         return packs
 
